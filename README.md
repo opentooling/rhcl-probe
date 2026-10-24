@@ -146,6 +146,29 @@ Checks steer the services with request headers, which each hop passes on:
 A pod outside the mesh (`outsider`) calls the services on request, to show what STRICT mTLS
 (connection reset) and NetworkPolicies (timeout) do to traffic that bypasses the gateway.
 
+### Service accounts
+
+**Kubernetes ServiceAccounts.** The chart creates one per role: frontend, catalog, pricing,
+outsider and console. They are mainly identities in the mesh:
+
+- **Mesh identity.** Istio names each pod's certificate after its ServiceAccount, e.g.
+  `spiffe://cluster.local/ns/rhcl-probe/sa/probe-rhcl-probe-frontend`. The
+  AuthorizationPolicies use these to allow only frontend to call catalog, and only catalog to
+  call pricing. With one shared ServiceAccount, every pod would have the same identity, and
+  neither the policies nor the SPIFFE ID checks could tell them apart.
+- **API access for the console only.** The console reads the status of the Gateway, Kuadrant
+  and the policies, with read-only RBAC. The other ServiceAccounts mount no token at all.
+
+catalog v1 and v2 share one ServiceAccount, and so do both pricing pods: each pair is one
+service, so it gets one identity.
+
+**`serviceAccountsEnabled` on the Keycloak client.** It turns on the client credentials grant,
+the only way an unattended pod can get a token. Login in a browser needs a person, and the
+password grant would mean storing a user's password (OAuth 2.1 drops it). Keycloak creates a
+user for the client, `service-account-rhcl-probe`, whose ID is the token's `sub`: the caller
+the gateway's rate limits count. Without it, set `auth.oidc.enabled: false`, and the OIDC check
+is skipped.
+
 ## Development
 
 ```bash
