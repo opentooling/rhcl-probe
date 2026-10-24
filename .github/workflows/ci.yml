@@ -48,7 +48,8 @@ jobs:
       - name: Test, including the config the chart renders
         run: |
           helm template probe "$CHART" -n rhcl-probe --show-only templates/config.yaml \
-            | python3 -c 'import sys, yaml; print(yaml.safe_load(sys.stdin)["data"]["config.json"])' > "$RUNNER_TEMP/config.json"
+            | python3 -c 'import sys, yaml; print(next(d for d in yaml.safe_load_all(sys.stdin) if d and d["metadata"]["name"].endswith("-config"))["data"]["config.json"])' \
+            > "$RUNNER_TEMP/config.json"
           RENDERED_CONFIG="$RUNNER_TEMP/config.json" go test -race ./...
 
   chart:
