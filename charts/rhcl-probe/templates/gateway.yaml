@@ -165,7 +165,7 @@ spec:
         apiKey:
           selector:
             matchLabels:
-              rhcl-probe/api: {{ $fn }}-{{ .Release.Namespace }}
+              rhcl-probe/api: {{ include "rhcl-probe.apiKeySelector" . }}
         credentials:
           authorizationHeader:
             prefix: {{ $v.auth.apiKeys.prefix }}

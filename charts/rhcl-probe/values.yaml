@@ -66,13 +66,21 @@ auth:
   #   alice: plan gold, group admin (may POST)
   #   bob:   plan free, no group     (may not POST, limited to rateLimits.plans.free)
   apiKeys:
-    # Where Authorino reads API-key Secrets from. The chart creates them there.
+    # Where Authorino reads API-key Secrets from.
     namespace: kuadrant-system
     # Header format: "Authorization: APIKEY <key>".
     prefix: APIKEY
-    # Leave empty to generate keys on install and keep them on upgrade. Under Argo CD, which
-    # renders without cluster access, set them (or create the Secrets with extraObjects, e.g.
-    # as ExternalSecrets) so they don't change on every sync.
+    # Create the key Secrets. Turn off to bring your own, e.g. ExternalSecrets from Vault in
+    # extraObjects (see examples/). You then provide:
+    #   - one Secret per user in auth.apiKeys.namespace, with the api_key field, the labels
+    #     authorino.kuadrant.io/managed-by: authorino and
+    #     rhcl-probe/api: {{ include "rhcl-probe.apiKeySelector" $ }}, and the annotations
+    #     secret.kuadrant.io/user-id, secret.kuadrant.io/plan-id and rhcl-probe/groups
+    #   - <fullname>-apikeys in the release namespace, with the fields alice and bob, which
+    #     the console reads
+    create: true
+    # With create: leave empty to generate keys on install and keep them on upgrade. Under
+    # Argo CD, which renders without cluster access, set them, or they change on every sync.
     alice: ""
     bob: ""
 

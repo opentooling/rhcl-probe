@@ -13,7 +13,7 @@ rhcl-probe is installed in {{ .Release.Namespace }}. Its routes attach to {{ .Va
 3. Or run the whole suite from the command line; it fails if any check fails:
 
    helm test {{ .Release.Name }} -n {{ .Release.Namespace }} --logs
-{{- if not (or .Values.auth.apiKeys.alice .Values.auth.apiKeys.bob) }}
+{{- if and .Values.auth.apiKeys.create (not (or .Values.auth.apiKeys.alice .Values.auth.apiKeys.bob)) }}
 
 The API keys for alice and bob were generated and are kept on upgrade. Under Argo CD, set
 auth.apiKeys.alice and auth.apiKeys.bob, or they change on every sync.

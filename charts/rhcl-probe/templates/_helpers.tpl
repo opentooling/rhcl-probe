@@ -58,6 +58,11 @@ rhcl-probe/role: {{ .role }}
 {{- printf "%s-%s" (include "rhcl-probe.fullname" .ctx) .role }}
 {{- end }}
 
+{{/* Value of the rhcl-probe/api label the API-key Secrets need, for extraObjects too. */}}
+{{- define "rhcl-probe.apiKeySelector" -}}
+{{- printf "%s-%s" (include "rhcl-probe.fullname" .) .Release.Namespace | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{- define "rhcl-probe.gatewaySA" -}}
 {{- default (printf "%s-istio" .Values.gateway.name) .Values.gateway.serviceAccount }}
 {{- end }}

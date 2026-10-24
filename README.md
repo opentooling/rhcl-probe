@@ -87,6 +87,19 @@ The values you are most likely to set:
 
 See [values.yaml](charts/rhcl-probe/values.yaml) for all of them.
 
+### Example: the RHCL platform with Keycloak and Vault
+
+[examples/rhcl-platform-values.yaml](examples/rhcl-platform-values.yaml) installs the probe on the
+platform from [jugash/RHCL](https://github.com/jugash/RHCL), with:
+
+- **OIDC** tokens from Keycloak. The `KeycloakClient` (for keycloak-client-operator,
+  `keycloak.jugash.com/v1alpha1`) is a confidential client with the client credentials grant only, so it has no `redirectUris`,
+  `postLogoutRedirectUris` or `webOrigins`. A hardcoded `plan` claim sets its rate-limit plan.
+- **API keys from Vault**, synced by External Secrets, with `auth.apiKeys.create: false`.
+- **A Route for the console**, off by default: the console has no login.
+
+Each part is a conditional `extraObjects` item, switched by `features.*`.
+
 ### extraObjects
 
 Anything else to deploy with the release: ExternalSecrets for the API keys, an OpenShift Route

@@ -49,11 +49,12 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           trivyignores: .trivyignore
-      - name: Render the chart with each CI values file
+      - name: Render the chart with each CI values file and example
         run: |
           mkdir -p rendered
-          for f in "$CHART"/ci/*.yaml; do
-            helm template probe "$CHART" -n rhcl-probe -f "$f" > "rendered/$(basename "$f")"
+          for f in "$CHART"/ci/*.yaml examples/*-values.yaml; do
+            helm template probe "$CHART" -n rhcl-probe -f "$f" --set features.consoleRoute=true \
+              > "rendered/$(basename "$f")"
           done
       - name: Scan the rendered manifests
         uses: aquasecurity/trivy-action@v0.36.0
@@ -101,10 +102,10 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - name: Lint with the defaults and every CI values file
+      - name: Lint with the defaults, every CI values file and every example
         run: |
           helm lint "$CHART"
-          for f in "$CHART"/ci/*.yaml; do helm lint "$CHART" -f "$f"; done
+          for f in "$CHART"/ci/*.yaml examples/*-values.yaml; do helm lint "$CHART" -f "$f"; done
 
       # extraObjects is a feature, so it is proven to render rather than assumed: once as a
       # YAML object and once as a templated string, each resolving the release's own helpers,
@@ -138,14 +139,16 @@ jobs:
           done
           python3 hack/crd2schema.py schemas/kuadrant.io crds/*.yaml
           helm template probe "$CHART" -n rhcl-probe > default.yaml
-          for f in "$CHART"/ci/full-values.yaml "$CHART"/ci/minimal-values.yaml; do
-            helm template probe "$CHART" -n rhcl-probe -f "$f" > "$(basename "$f" -values.yaml).yaml"
+          for f in "$CHART"/ci/full-values.yaml "$CHART"/ci/minimal-values.yaml examples/*-values.yaml; do
+            helm template probe "$CHART" -n rhcl-probe -f "$f" --set features.consoleRoute=true \
+              > "$(basename "$f" -values.yaml).yaml"
           done
-          "$RUNNER_TEMP/kubeconform" -strict -summary -kubernetes-version 1.31.0 \
+          # Route has no published schema; KeycloakClient's CRD lives in keycloak-client-operator.
+          "$RUNNER_TEMP/kubeconform" -strict -summary -kubernetes-version 1.31.0 -skip Route,KeycloakClient \
             -schema-location default \
             -schema-location 'schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            default.yaml full.yaml minimal.yaml
+            default.yaml full.yaml minimal.yaml rhcl-platform.yaml
 
   image:
     name: Build, smoke-test and scan image (${{ matrix.arch }})

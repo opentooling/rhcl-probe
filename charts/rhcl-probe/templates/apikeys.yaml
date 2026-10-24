@@ -1,3 +1,4 @@
+{{- if .Values.auth.apiKeys.create }}
 {{- $fn := include "rhcl-probe.fullname" . }}
 {{- $ak := .Values.auth.apiKeys }}
 {{- /*
@@ -30,7 +31,7 @@ metadata:
   labels:
     {{- include "rhcl-probe.labels" $ | nindent 4 }}
     authorino.kuadrant.io/managed-by: authorino
-    rhcl-probe/api: {{ $fn }}-{{ $.Release.Namespace }}
+    rhcl-probe/api: {{ include "rhcl-probe.apiKeySelector" $ }}
   annotations:
     secret.kuadrant.io/user-id: {{ $user }}
     secret.kuadrant.io/plan-id: {{ (get $users $user).plan }}
@@ -51,3 +52,4 @@ stringData:
   {{- range $user, $key := $keys }}
   {{ $user }}: {{ $key | quote }}
   {{- end }}
+{{- end }}

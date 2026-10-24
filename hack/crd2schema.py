@@ -33,6 +33,8 @@ def main(out_dir, paths):
         for version in crd["spec"]["versions"]:
             schema = version["schema"]["openAPIV3Schema"]
             strict(schema)
+            # Not at the root: some CRDs leave apiVersion, kind and metadata out of it.
+            schema.pop("additionalProperties", None)
             out = f"{out_dir}/{kind}_{version['name']}.json"
             with open(out, "w") as f:
                 json.dump(schema, f)
