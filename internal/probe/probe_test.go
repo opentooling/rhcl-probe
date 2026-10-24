@@ -1,7 +1,10 @@
 package probe
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -57,9 +60,24 @@ func TestSplitOutcome(t *testing.T) {
 	}
 }
 
+// Every tampered signature must decode to different bytes, including when the last base64url
+// character carries padding bits (an RS256 signature ending in "A" was the case that slipped).
 func TestTamper(t *testing.T) {
-	if tamper("a.b.cA") == "a.b.cA" || tamper("a.b.cZ") == "a.b.cZ" {
-		t.Fatal("token unchanged")
+	for i := range 2000 {
+		sig := make([]byte, 256)
+		rand.Read(sig)
+		if i == 0 {
+			sig[255] = 0 // encodes to a final "A"
+		}
+		token := "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0." + base64.RawURLEncoding.EncodeToString(sig)
+		parts := strings.Split(tamper(token), ".")
+		got, err := base64.RawURLEncoding.DecodeString(parts[2])
+		if err != nil || bytes.Equal(got, sig) || parts[0] != "eyJhbGciOiJSUzI1NiJ9" || parts[1] != "eyJzdWIiOiJ4In0" {
+			t.Fatalf("token %d: signature unchanged or header/payload altered", i)
+		}
+	}
+	if tamper("not-a-jwt") == "not-a-jwt" {
+		t.Fatal("non-JWT unchanged")
 	}
 }
 

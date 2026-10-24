@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
@@ -145,17 +146,22 @@ func checkOIDC(ctx context.Context, p *Probe) Outcome {
 	return passf("valid token 200, tampered 401")
 }
 
-// tamper flips the signature's last character, so the token no longer verifies.
+// tamper flips the first byte of the signature, so the token no longer verifies.
+// It works on the decoded bytes: the last base64url character of a signature can carry
+// padding bits that decoders ignore, so changing a character can leave the signature intact
+// (for RS256, a quarter of the time).
 func tamper(token string) string {
-	if token == "" {
-		return "x"
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return token + "x"
 	}
-	last := token[len(token)-1]
-	repl := byte('A')
-	if last == 'A' {
-		repl = 'B'
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(sig) == 0 {
+		return token + "x"
 	}
-	return token[:len(token)-1] + string(repl)
+	sig[0] ^= 0xff
+	parts[2] = base64.RawURLEncoding.EncodeToString(sig)
+	return strings.Join(parts, ".")
 }
 
 func checkAdminWrites(ctx context.Context, p *Probe) Outcome {
