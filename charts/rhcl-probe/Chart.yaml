@@ -1,0 +1,22 @@
+apiVersion: v2
+name: rhcl-probe
+description: Tests a Connectivity Link API gateway and an OpenShift Service Mesh end to end with a small demo app, and shows which features work.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/opentooling/rhcl-probe
+sources:
+  - https://github.com/opentooling/rhcl-probe
+keywords:
+  - connectivity-link
+  - kuadrant
+  - gateway-api
+  - istio
+  - service-mesh
+  - openshift
+maintainers:
+  - name: opentooling
+# No kubeVersion: what matters is Gateway API v1.1 (HTTPRoute timeouts), Istio 1.22 (its v1
+# APIs, OSSM 3) and Kuadrant v1 policies, which a Kubernetes version can't express.
+annotations:
+  artifacthub.io/license: MIT

@@ -1,0 +1,158 @@
+# rhcl-probe
+
+Tests a **Red Hat Connectivity Link** API gateway and an **OpenShift Service Mesh 3** end to end,
+and shows which features work.
+
+It installs a small demo app (frontend → catalog v1/v2 → pricing) and a console. The console
+sends real traffic through your gateway and between the services, and reports each feature as
+passed, failed or skipped. You can run it from the browser or with `helm test`.
+
+```
+Gateway ──► frontend ──► catalog v1 (90%) ──► pricing
+ TLS, auth,              catalog v2 (10%)     pricing (faulty, outlier pool only)
+ rate limits     every hop is mutual TLS and reports its caller, version and attempt count
+```
+
+## What it checks
+
+| Group | Checks |
+|---|---|
+| Platform | Kuadrant ready · Gateway programmed · probe routes accepted · AuthPolicies and RateLimitPolicies enforced · sidecars injected |
+| API gateway | TLS certificate (issuer, expiry) · HTTP→HTTPS redirect · host and path routing · default deny · API keys (missing, wrong, valid) · OIDC token (valid, tampered) · claim-based authorization (only `admin` may POST) · gateway → app mTLS · header match · weighted split · URL rewrite and header filters · request mirroring · route timeout · route rate limit · per-caller limits by plan |
+| Service mesh | SPIFFE identity on every hop · request ID propagation · STRICT mTLS rejects plaintext · AuthorizationPolicy · east-west weighted split and header routing · retries · fault injection (abort, delay) · per-hop timeout · outlier detection · egress `REGISTRY_ONLY` · NetworkPolicy blocks gateway bypass |
+
+A feature you switch off in the values (OIDC, NetworkPolicies, the platform's default deny…) is
+reported as **skipped**, not failed.
+
+The console's **Experiments** panel runs the same scenarios hands-on: pick traffic split,
+retries, fault injection, circuit breaker, authorization or rate limit, send up to 60 requests
+and see each result.
+
+## Requirements
+
+- OpenShift Service Mesh 3 (Istio 1.22+), sidecar mode, with the gateway in the mesh
+- Connectivity Link (Kuadrant v1 policies) and a Gateway API gateway (v1.1+)
+- An HTTPS listener whose hostname covers the probe's hostname
+
+[jugash/RHCL](https://github.com/jugash/RHCL) sets all of that up with GitOps. The defaults
+below match it.
+
+## Install
+
+```bash
+oc new-project rhcl-probe
+```
+
+The gateway accepts routes only from labelled namespaces:
+
+```bash
+oc label namespace rhcl-probe api-gateway-access=true
+```
+
+```bash
+helm install probe oci://ghcr.io/opentooling/charts/rhcl-probe -n rhcl-probe \
+  --set gateway.hostname=probe.api.example.internal
+```
+
+Run the suite. `helm test` fails if any check fails:
+
+```bash
+helm test probe -n rhcl-probe --logs
+```
+
+Or open the console:
+
+```bash
+oc port-forward -n rhcl-probe svc/probe-rhcl-probe-console 8080:8080
+```
+
+## Configuration
+
+The values you are most likely to set:
+
+| Value | Default | |
+|---|---|---|
+| `gateway.name`, `gateway.namespace` | `api-gateway` | The Gateway the routes attach to |
+| `gateway.hostname` | `probe.api.example.internal` | Hostname of the probe's routes. No DNS record needed: the console dials the gateway directly |
+| `gateway.tls.issuerContains` | `""` | Expected issuer of the gateway certificate, e.g. `internal-ca` |
+| `expect.defaultDeny`, `expect.httpRedirect` | `true` | Whether the platform enforces these |
+| `auth.apiKeys.namespace` | `kuadrant-system` | Where Authorino reads API-key Secrets |
+| `auth.apiKeys.alice`, `.bob` | generated | Set them under Argo CD, which can't keep generated keys |
+| `auth.oidc.*` | off | Issuer and client for the client-credentials check |
+| `trustedCA` | OpenShift trust bundle | CA the console trusts for the gateway and the IdP |
+| `mesh.strictMTLS`, `.authorizationPolicies`, `.trafficManagement` | `true` | Mesh features to set up and check |
+| `mesh.egress.registryOnly` | `true` | Limit the console to the mesh registry |
+| `networkPolicies.enabled` | `true` | Ingress NetworkPolicies for the demo app |
+| `extraObjects` | `[]` | Extra manifests, see below |
+
+See [values.yaml](charts/rhcl-probe/values.yaml) for all of them.
+
+### extraObjects
+
+Anything else to deploy with the release: ExternalSecrets for the API keys, an OpenShift Route
+for the console, policies of your own. Each item is a YAML object or a string, rendered with
+`tpl`, so it can use the chart's helpers. Wrap an item as `{when, object}` to render it only
+when a condition holds:
+
+```yaml
+features:
+  consoleRoute: true
+extraObjects:
+  - when: "{{ .Values.features.consoleRoute }}"
+    object:
+      apiVersion: route.openshift.io/v1
+      kind: Route
+      metadata:
+        name: '{{ include "rhcl-probe.fullname" $ }}-console'
+      spec:
+        to: { kind: Service, name: '{{ include "rhcl-probe.fullname" $ }}-console' }
+        port: { targetPort: http }
+        tls: { termination: edge }
+```
+
+## How it works
+
+One image runs every role, chosen by `$ROLE`. Each service answers with what it saw, plus
+the answer of the next hop:
+
+```json
+{"service":"frontend","caller":"spiffe://cluster.local/ns/api-gateway/sa/api-gateway-istio",
+ "requestId":"…","status":200,
+ "next":{"service":"catalog","version":"v2", "next":{"service":"pricing","attempt":2}}}
+```
+
+Checks steer the services with request headers, which each hop passes on:
+
+| Header | Effect |
+|---|---|
+| `x-probe-fail: pricing=0.3` | pricing answers 500 on 30% of requests |
+| `x-probe-delay: frontend=3s` | frontend waits 3s |
+| `x-probe-scenario: retry \| fault-abort \| fault-delay \| timeout \| outlier` | selects the mesh route for that scenario |
+| `x-version: v2` | routes to catalog v2 |
+
+A pod outside the mesh (`outsider`) calls the services on request, to show what STRICT mTLS
+(connection reset) and NetworkPolicies (timeout) do to traffic that bypasses the gateway.
+
+## Development
+
+```bash
+go test ./...
+```
+
+```bash
+helm lint charts/rhcl-probe -f charts/rhcl-probe/ci/full-values.yaml
+```
+
+Run a role locally:
+
+```bash
+ROLE=frontend PORT=9001 NEXT=http://localhost:9002 go run .
+```
+
+Every push to `main` builds and scans the amd64 and arm64 images, and publishes
+`ghcr.io/opentooling/rhcl-probe:sha-<commit>` with the chart at
+`oci://ghcr.io/opentooling/charts/rhcl-probe` (version `0.1.<run>`, defaulting to that image).
+
+## License
+
+MIT

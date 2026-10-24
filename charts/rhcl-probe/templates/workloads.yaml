@@ -1,0 +1,217 @@
+{{- include "rhcl-probe.validate" . }}
+{{- $fn := include "rhcl-probe.fullname" . }}
+{{- $url := dict "ctx" . }}
+{{- /*
+One image, one role per Deployment. catalog v1/v2 share a role (and ServiceAccount) and differ
+by the "version" label the mesh's subsets select on. pricing-faulty joins only the pricing
+pool, which catalog calls for the outlier scenario.
+*/}}
+{{- $components := list
+  (dict "name" "frontend" "role" "frontend" "version" "v1" "mesh" true "strict" true
+        "next" (include "rhcl-probe.url" (dict "ctx" . "svc" "catalog")))
+  (dict "name" "catalog-v1" "role" "catalog" "version" "v1" "mesh" true "strict" true
+        "next" (include "rhcl-probe.url" (dict "ctx" . "svc" "pricing"))
+        "nextOutlier" (include "rhcl-probe.url" (dict "ctx" . "svc" "pricing-pool")))
+  (dict "name" "catalog-v2" "role" "catalog" "version" "v2" "mesh" true "strict" true
+        "next" (include "rhcl-probe.url" (dict "ctx" . "svc" "pricing"))
+        "nextOutlier" (include "rhcl-probe.url" (dict "ctx" . "svc" "pricing-pool")))
+  (dict "name" "pricing" "role" "pricing" "version" "v1" "mesh" true "strict" true "pool" true)
+  (dict "name" "pricing-faulty" "role" "pricing" "version" "faulty" "mesh" true "strict" true "pool" true "faulty" true)
+  (dict "name" "outsider" "role" "outsider" "mesh" false)
+  (dict "name" "console" "role" "console" "mesh" true)
+}}
+{{- range $role := list "frontend" "catalog" "pricing" "outsider" "console" }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "rhcl-probe.sa" (dict "ctx" $ "role" $role) }}
+  labels:
+    {{- include "rhcl-probe.labels" $ | nindent 4 }}
+automountServiceAccountToken: {{ eq $role "console" }}
+{{- end }}
+{{- range $c := $components }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fn }}-{{ $c.name }}
+  labels:
+    {{- include "rhcl-probe.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $c.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rhcl-probe.componentSelector" (dict "ctx" $ "component" $c.name) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rhcl-probe.componentSelector" (dict "ctx" $ "component" $c.name) | nindent 8 }}
+        rhcl-probe/role: {{ $c.role }}
+        {{- with $c.version }}
+        version: {{ . }}
+        {{- end }}
+        {{- if $c.pool }}
+        rhcl-probe/pool: pricing
+        {{- end }}
+        {{- if $c.strict }}
+        rhcl-probe/mtls: strict
+        {{- end }}
+        {{- include "rhcl-probe.meshLabels" (dict "ctx" $ "mesh" $c.mesh) | nindent 8 }}
+      annotations:
+        {{- if $c.mesh }}
+        # The app calls the next hop as soon as it starts: let the sidecar come up first.
+        proxy.istio.io/config: '{"holdApplicationUntilProxyStarts": true}'
+        {{- end }}
+        {{- if eq $c.role "console" }}
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") $ | sha256sum }}
+        {{- end }}
+        {{- with $.Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "rhcl-probe.sa" (dict "ctx" $ "role" $c.role) }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "rhcl-probe.podSecurityContext" $ | nindent 8 }}
+      containers:
+        - name: {{ $c.role }}
+          image: {{ include "rhcl-probe.image" $ | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          env:
+            - name: ROLE
+              value: {{ $c.role }}
+            {{- with $c.version }}
+            - name: VERSION
+              value: {{ . }}
+            {{- end }}
+            {{- with $c.next }}
+            - name: NEXT
+              value: {{ . }}
+            {{- end }}
+            {{- with $c.nextOutlier }}
+            - name: NEXT_OUTLIER
+              value: {{ . }}
+            {{- end }}
+            {{- if $c.faulty }}
+            - name: FAULTY
+              value: "true"
+            {{- end }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          securityContext:
+            {{- include "rhcl-probe.containerSecurityContext" $ | nindent 12 }}
+          resources:
+            {{- toYaml (ternary $.Values.consoleResources $.Values.resources (eq $c.role "console")) | nindent 12 }}
+          {{- if eq $c.role "console" }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/rhcl-probe/config.json
+              subPath: config.json
+              readOnly: true
+            - name: apikeys
+              mountPath: /etc/rhcl-probe/apikeys
+              readOnly: true
+            {{- if include "rhcl-probe.caConfigMap" $ }}
+            - name: ca
+              mountPath: /etc/rhcl-probe/ca
+              readOnly: true
+            {{- end }}
+            {{- if $.Values.auth.oidc.enabled }}
+            - name: oidc
+              mountPath: /etc/rhcl-probe/oidc
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if eq $c.role "console" }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fn }}-config
+        - name: apikeys
+          secret:
+            secretName: {{ $fn }}-apikeys
+        {{- with include "rhcl-probe.caConfigMap" $ }}
+        - name: ca
+          configMap:
+            name: {{ . }}
+            optional: true
+            items:
+              - key: {{ $.Values.trustedCA.key }}
+                path: ca-bundle.crt
+        {{- end }}
+        {{- if $.Values.auth.oidc.enabled }}
+        - name: oidc
+          secret:
+            secretName: {{ $.Values.auth.oidc.clientSecret.existingSecret }}
+            items:
+              - key: {{ $.Values.auth.oidc.clientSecret.key }}
+                path: client-secret
+        {{- end }}
+      {{- end }}
+      {{- with $.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- /* Services: one per component, plus catalog (both versions) and the pricing pool. */}}
+{{- $services := list
+  (dict "name" "frontend" "selector" (include "rhcl-probe.componentSelector" (dict "ctx" . "component" "frontend")))
+  (dict "name" "catalog" "selector" (include "rhcl-probe.roleSelector" (dict "ctx" . "role" "catalog")))
+  (dict "name" "catalog-v1" "selector" (include "rhcl-probe.componentSelector" (dict "ctx" . "component" "catalog-v1")))
+  (dict "name" "catalog-v2" "selector" (include "rhcl-probe.componentSelector" (dict "ctx" . "component" "catalog-v2")))
+  (dict "name" "pricing" "selector" (include "rhcl-probe.componentSelector" (dict "ctx" . "component" "pricing")))
+  (dict "name" "pricing-pool" "selector" (printf "%s\nrhcl-probe/pool: pricing" (include "rhcl-probe.selectorLabels" .)))
+  (dict "name" "outsider" "selector" (include "rhcl-probe.componentSelector" (dict "ctx" . "component" "outsider")))
+  (dict "name" "console" "selector" (include "rhcl-probe.componentSelector" (dict "ctx" . "component" "console")))
+}}
+{{- range $s := $services }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fn }}-{{ $s.name }}
+  labels:
+    {{- include "rhcl-probe.labels" $ | nindent 4 }}
+spec:
+  selector:
+    {{- $s.selector | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+      appProtocol: http
+{{- end }}

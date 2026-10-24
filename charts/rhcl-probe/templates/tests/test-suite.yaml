@@ -1,0 +1,36 @@
+{{- if .Values.tests.enabled }}
+{{- /*
+`helm test`: run the whole suite on the console and fail if any check fails. The pod has no
+sidecar (a sidecar would keep it from ever completing), which is why the console accepts
+plaintext on its port.
+*/}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "rhcl-probe.fullname" . }}-test-suite
+  labels:
+    {{- include "rhcl-probe.componentSelector" (dict "ctx" . "component" "test") | nindent 4 }}
+    sidecar.istio.io/inject: "false"
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    {{- include "rhcl-probe.podSecurityContext" . | nindent 4 }}
+  containers:
+    - name: suite
+      image: {{ include "rhcl-probe.image" . | quote }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      args: ["check", "--url", {{ include "rhcl-probe.url" (dict "ctx" . "svc" "console") | quote }}]
+      securityContext:
+        {{- include "rhcl-probe.containerSecurityContext" . | nindent 8 }}
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { memory: 64Mi }
+{{- end }}

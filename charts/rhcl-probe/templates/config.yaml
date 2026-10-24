@@ -1,0 +1,77 @@
+{{- $fn := include "rhcl-probe.fullname" . }}
+{{- $u := dict "ctx" . }}
+{{- $sa := dict "ctx" . }}
+{{- $v := .Values }}
+{{- /* Everything the console needs to know, from these values only. Read by internal/probe/config.go. */}}
+{{- $config := dict
+  "release" .Release.Name
+  "namespace" .Release.Namespace
+  "trustDomain" $v.trustDomain
+  "gateway" (dict
+    "name" $v.gateway.name
+    "namespace" $v.gateway.namespace
+    "serviceAccount" (include "rhcl-probe.gatewaySA" .)
+    "host" $v.gateway.hostname
+    "address" $v.gateway.address
+    "httpPort" (int $v.gateway.httpPort)
+    "httpsPort" (int $v.gateway.httpsPort)
+    "issuerContains" $v.gateway.tls.issuerContains
+    "insecureSkipVerify" $v.gateway.tls.insecureSkipVerify)
+  "kuadrant" (dict "namespace" $v.kuadrant.namespace)
+  "services" (dict
+    "frontend" (include "rhcl-probe.url" (dict "ctx" . "svc" "frontend"))
+    "catalog" (include "rhcl-probe.url" (dict "ctx" . "svc" "catalog"))
+    "catalogV1" (include "rhcl-probe.url" (dict "ctx" . "svc" "catalog-v1"))
+    "catalogV2" (include "rhcl-probe.url" (dict "ctx" . "svc" "catalog-v2"))
+    "outsider" (include "rhcl-probe.url" (dict "ctx" . "svc" "outsider")))
+  "serviceAccounts" (dict
+    "frontend" (include "rhcl-probe.sa" (dict "ctx" . "role" "frontend"))
+    "catalog" (include "rhcl-probe.sa" (dict "ctx" . "role" "catalog"))
+    "pricing" (include "rhcl-probe.sa" (dict "ctx" . "role" "pricing"))
+    "console" (include "rhcl-probe.sa" (dict "ctx" . "role" "console")))
+  "expect" (dict
+    "defaultDeny" $v.expect.defaultDeny
+    "httpRedirect" $v.expect.httpRedirect
+    "strictMTLS" $v.mesh.strictMTLS
+    "authorizationPolicies" $v.mesh.authorizationPolicies
+    "trafficManagement" $v.mesh.trafficManagement
+    "networkPolicies" $v.networkPolicies.enabled)
+  "limits" (dict
+    "public" $v.rateLimits.public
+    "free" $v.rateLimits.plans.free
+    "gold" $v.rateLimits.plans.gold)
+  "routes" (dict "splitV2Percent" (int $v.routes.splitV2Percent) "timeout" $v.routes.timeout)
+  "mesh" (dict "splitV2Percent" (int $v.mesh.splitV2Percent))
+  "egress" (dict
+    "registryOnly" $v.mesh.egress.registryOnly
+    "blockedUrl" $v.mesh.egress.blockedUrl
+    "allowedUrl" $v.mesh.egress.allowedUrl)
+  "apiKeys" (dict "prefix" $v.auth.apiKeys.prefix "dir" "/etc/rhcl-probe/apikeys")
+  "oidc" (dict
+    "enabled" $v.auth.oidc.enabled
+    "issuerUrl" $v.auth.oidc.issuerUrl
+    "clientId" $v.auth.oidc.clientId
+    "scope" $v.auth.oidc.scope
+    "clientSecretFile" "/etc/rhcl-probe/oidc/client-secret")
+  "caFile" (ternary "/etc/rhcl-probe/ca/ca-bundle.crt" "" (ne (include "rhcl-probe.caConfigMap" .) ""))
+}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fn }}-config
+  labels:
+    {{- include "rhcl-probe.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- $config | toPrettyJson | nindent 4 }}
+{{- if and .Values.trustedCA.openshiftInjected (not .Values.trustedCA.configMap) }}
+---
+# OpenShift fills ca-bundle.crt with the cluster trust bundle. Leave data empty.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fn }}-ca-bundle
+  labels:
+    {{- include "rhcl-probe.labels" . | nindent 4 }}
+    config.openshift.io/inject-trusted-cabundle: "true"
+{{- end }}
