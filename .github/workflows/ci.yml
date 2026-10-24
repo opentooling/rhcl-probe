@@ -27,8 +27,47 @@ env:
   KUADRANT_VERSION: v1.6.0
 
 jobs:
+  # The gate: every other job waits for it. It scans what goes into the image and the cluster
+  # before anything is built: Go dependencies, committed secrets, the Dockerfile, and the chart
+  # as it renders with each CI values file (Trivy's own Helm scan only sees the defaults).
+  # The image itself is scanned again after the build, in the image job.
+  scan:
+    name: Trivy scan (dependencies, secrets, misconfigurations)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: Scan the repository
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
+      - name: Render the chart with each CI values file
+        run: |
+          mkdir -p rendered
+          for f in "$CHART"/ci/*.yaml; do
+            helm template probe "$CHART" -n rhcl-probe -f "$f" > "rendered/$(basename "$f")"
+          done
+      - name: Scan the rendered manifests
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: rendered
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore
+          skip-setup-trivy: true
+
   test:
     name: Go tests
+    needs: scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -54,6 +93,7 @@ jobs:
 
   chart:
     name: Helm chart
+    needs: scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -109,6 +149,7 @@ jobs:
 
   image:
     name: Build, smoke-test and scan image (${{ matrix.arch }})
+    needs: scan
     strategy:
       matrix:
         include:
@@ -174,6 +215,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+          trivyignores: .trivyignore
 
       - name: Explain skipped publish
         if: env.PUBLISH != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -216,8 +258,8 @@ jobs:
   publish:
     name: Publish multi-arch image to GHCR
     if: needs.image.outputs.publish == 'true'
-    # Only a commit that passed every check.
-    needs: [test, chart, image]
+    # Only a commit that passed every check, the Trivy gate first.
+    needs: [scan, test, chart, image]
     runs-on: ubuntu-latest
     permissions:
       contents: read

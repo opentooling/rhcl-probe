@@ -147,12 +147,14 @@ resources:
     cpu: 10m
     memory: 24Mi
   limits:
+    cpu: 200m
     memory: 64Mi
 consoleResources:
   requests:
     cpu: 20m
     memory: 32Mi
   limits:
+    cpu: 500m
     memory: 128Mi
 
 podAnnotations: {}

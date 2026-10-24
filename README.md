@@ -149,7 +149,12 @@ Run a role locally:
 ROLE=frontend PORT=9001 NEXT=http://localhost:9002 go run .
 ```
 
-Every push to `main` builds and scans the amd64 and arm64 images, and publishes
+CI starts with a Trivy scan of the repository (Go dependencies, secrets, the Dockerfile) and of
+the chart as rendered with each `ci/` values file. Every other job waits for it, and a fixable
+HIGH or CRITICAL finding stops the pipeline. Findings that are accepted on purpose are listed,
+with the reason, in [.trivyignore](.trivyignore).
+
+Every push to `main` then builds, smoke-tests and scans the amd64 and arm64 images, and publishes
 `ghcr.io/opentooling/rhcl-probe:sha-<commit>` with the chart at
 `oci://ghcr.io/opentooling/charts/rhcl-probe` (version `0.1.<run>`, defaulting to that image).
 
