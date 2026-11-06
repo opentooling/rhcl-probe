@@ -146,6 +146,9 @@ Checks steer the services with request headers, which each hop passes on:
 A pod outside the mesh (`outsider`) calls the services on request, to show what STRICT mTLS
 (connection reset) and NetworkPolicies (timeout) do to traffic that bypasses the gateway.
 
+A check that fails while the same request works with curl is usually the console's sidecar at
+work: see [Troubleshooting](docs/troubleshooting.md).
+
 ### Service accounts
 
 **Kubernetes ServiceAccounts.** The chart creates one per role: frontend, catalog, pricing,
