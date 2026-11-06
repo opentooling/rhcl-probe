@@ -310,7 +310,11 @@ spec:
     - {{ $host | quote }}
   exportTo: ["."]
   location: MESH_EXTERNAL
-  resolution: DNS
+  # NONE: the sidecar forwards to the address the console resolved, and still lets only this
+  # host's TLS server name through. With DNS, the sidecar resolves the name itself, and where
+  # that fails (search domains, /etc/hosts, IPv6-only answers) it has no endpoint and resets
+  # the connection even though the console resolves the name fine.
+  resolution: NONE
   ports:
     - number: 443
       name: https

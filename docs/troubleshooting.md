@@ -99,15 +99,18 @@ directly. That needs a code change. Once it does, the proxy's host must also be 
 
 ### A works, B is reset: the sidecar drops or breaks the connection
 
-```sh
-# Does the sidecar have healthy endpoints for Keycloak? Empty means no ServiceEntry
-# applies, or the sidecar can't resolve the name.
-kubectl exec -n <ns> <console-pod> -c istio-proxy -- \
-  pilot-agent request GET clusters | grep <keycloak-host>
+A quick way to land here: the OIDC checks pass with `mesh.egress.registryOnly: false`.
 
-# Rising counters here mean the sidecar treats the host as unknown and drops it
+```sh
+# Does the sidecar have healthy endpoints for Keycloak? Lines with an IP and
+# health_flags are endpoints; the default_priority/high_priority lines are only settings.
 kubectl exec -n <ns> <console-pod> -c istio-proxy -- \
-  pilot-agent request GET stats | grep BlackHoleCluster
+  pilot-agent request GET clusters | grep <keycloak-host> | grep -E 'health_flags|cx_active'
+
+# A count that rises by more than the egress check's own dropped call (it calls
+# mesh.egress.blockedUrl on purpose) means the sidecar treats the host as unknown and drops it
+kubectl exec -n <ns> <console-pod> -c istio-proxy -- \
+  pilot-agent request GET stats | grep 'BlackHoleCluster.upstream_cx_total'
 
 # A mesh-wide DestinationRule forcing ISTIO_MUTUAL (e.g. host "*") wraps the
 # connection to Keycloak in mesh mTLS, which Keycloak resets
@@ -120,6 +123,12 @@ with the chart's:
 ```sh
 kubectl get serviceentry -A -o yaml | grep -B10 <keycloak-host>
 ```
+
+**No endpoint lines** mean the sidecar knows the host but has no address for it. Older chart
+versions created the ServiceEntry with `resolution: DNS`, so the sidecar resolved the name
+itself, and where that lookup failed it reset every connection, though the console resolved
+the name fine. The chart now uses `resolution: NONE`: the sidecar forwards to the address the
+console resolved, and still lets only that host's TLS server name through. Upgrade the chart.
 
 The chart's ServiceEntry assumes HTTPS on 443. An issuer on another port, on plain `http://`,
 or on an in-cluster Service is dropped the same way.
