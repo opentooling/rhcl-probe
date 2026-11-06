@@ -20,27 +20,37 @@ outside the cluster gets `301` with an `https://` location.
 (default `<gateway.name>-istio.<gateway.namespace>.svc`) on `gateway.httpPort`, without
 following redirects, and passes only on exactly `301` with a `Location` starting `https://`.
 
-**Cause.** The console's sidecar intercepts that plain-HTTP request. Istio's gateway pods are
-labelled mTLS-capable, so the sidecar sends the request to the gateway wrapped in mesh mTLS.
-The gateway's port-80 listener expects plain HTTP, rejects it, and the sidecar answers `502`.
+**Cause.** The console's sidecar answers the `502` itself, for one of two reasons:
+
+- **The hostname isn't in the mesh's registry.** The sidecar routes plain HTTP by `Host`
+  header, not by the address the console connects to, and the probe's hostname isn't a
+  Service. With `mesh.egress.registryOnly: true` the sidecar refuses it. HTTPS isn't affected,
+  because the sidecar routes it by the gateway Service's IP. This is the case if the check
+  passes with `registryOnly: false`.
+- **Mesh mTLS to a plaintext listener.** When the request is routed to the gateway's Service
+  through the mesh, the sidecar wraps it in mesh mTLS, because Istio's gateway pods count as
+  mTLS-capable. The gateway's port-80 listener expects plain HTTP and rejects it.
+
 An outside client has no sidecar, so it gets the `301`.
 
 **Confirm.**
 
 ```sh
-# The sidecar logs the 502, with a response flag such as UC, UF or URX
-kubectl logs -n <ns> <console-pod> -c istio-proxy | grep ' 502 '
+# block_all or BlackHole: the hostname isn't in the registry.
+# A flag such as UC, UF or URX: the mTLS case.
+kubectl logs -n <ns> <console-pod> -c istio-proxy --since=10m | grep ' 502 '
 ```
 
-The response also carries `server: envoy` and a body like
-`upstream connect error or disconnect/reset before headers`.
+**Fix.** The chart renders two objects named `<release>-gateway-http`, both visible to the
+release namespace only (`templates/mesh.yaml`). Upgrade to a chart version that has both.
 
-**Fix.** The chart renders a DestinationRule, `<release>-gateway-http`, that turns mesh TLS off
-for the gateway Service's HTTP port, for clients in the release namespace only
-(`templates/mesh.yaml`). Upgrade to a chart version that has it.
+- A VirtualService that routes the probe's hostname on the HTTP port to the gateway's Service.
+- A DestinationRule that turns mesh TLS off for that port.
 
-- It is not rendered when `gateway.address` is an IP address, because a DestinationRule host
-  can't be one. Use a hostname there.
+Notes:
+
+- Neither is rendered when `gateway.address` is an IP address, because their hosts can't be
+  one. Use a hostname there.
 - With `gateway.address` empty, the host is `<name>-istio.<namespace>.svc.cluster.local`. If
   your cluster's DNS domain isn't `cluster.local`, set `gateway.address` to the full name.
 

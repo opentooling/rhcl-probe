@@ -26,9 +26,9 @@ spec:
 {{- end }}
 {{- $gwHost := .Values.gateway.address | default (printf "%s-istio.%s.svc.cluster.local" .Values.gateway.name .Values.gateway.namespace) }}
 {{- if not (regexMatch "^[0-9.]+$|:" $gwHost) }}
-# The redirect check sends plain HTTP to the gateway's port 80. The gateway's pods count as
-# mTLS-capable, so without this the console's sidecar wraps that request in mesh mTLS, the
-# plaintext listener rejects it, and the check gets a 502 instead of the 301.
+# The redirect check sends plain HTTP to the gateway's port 80. Once the VirtualService below
+# routes it through the mesh, the console's sidecar would wrap it in mesh mTLS (the gateway's
+# pods count as mTLS-capable), and the plaintext listener would reject it with a 502.
 # Visible to this namespace only, so other workloads' traffic to the gateway is unchanged.
 apiVersion: networking.istio.io/v1
 kind: DestinationRule
@@ -46,6 +46,29 @@ spec:
           number: {{ int .Values.gateway.httpPort }}
         tls:
           mode: DISABLE
+---
+# The sidecar routes plain HTTP by Host header, and the redirect check's Host is the probe's
+# hostname, which isn't in the mesh's registry. With mesh.egress.registryOnly the sidecar
+# answers 502 for it before the request leaves the pod. This names the gateway's Service as
+# that hostname's destination on the HTTP port. (HTTPS is routed by the Service's IP instead,
+# so it needs nothing.)
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: {{ $fn }}-gateway-http
+  labels:
+    {{- include "rhcl-probe.labels" . | nindent 4 }}
+spec:
+  hosts:
+    - {{ .Values.gateway.hostname | quote }}
+  exportTo:
+    - "."
+  http:
+    - route:
+        - destination:
+            host: {{ $gwHost }}
+            port:
+              number: {{ int .Values.gateway.httpPort }}
 ---
 {{- end }}
 # The console also answers `helm test`, whose pod has no sidecar, so it accepts plaintext.
