@@ -24,6 +24,30 @@ spec:
     mode: STRICT
 ---
 {{- end }}
+{{- $gwHost := .Values.gateway.address | default (printf "%s-istio.%s.svc.cluster.local" .Values.gateway.name .Values.gateway.namespace) }}
+{{- if not (regexMatch "^[0-9.]+$|:" $gwHost) }}
+# The redirect check sends plain HTTP to the gateway's port 80. The gateway's pods count as
+# mTLS-capable, so without this the console's sidecar wraps that request in mesh mTLS, the
+# plaintext listener rejects it, and the check gets a 502 instead of the 301.
+# Visible to this namespace only, so other workloads' traffic to the gateway is unchanged.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: {{ $fn }}-gateway-http
+  labels:
+    {{- include "rhcl-probe.labels" . | nindent 4 }}
+spec:
+  host: {{ $gwHost }}
+  exportTo:
+    - "."
+  trafficPolicy:
+    portLevelSettings:
+      - port:
+          number: {{ int .Values.gateway.httpPort }}
+        tls:
+          mode: DISABLE
+---
+{{- end }}
 # The console also answers `helm test`, whose pod has no sidecar, so it accepts plaintext.
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
