@@ -196,7 +196,11 @@ func checkOutlier(ctx context.Context, p *Probe) Outcome {
 	if !p.Cfg.Expect.TrafficManagement {
 		return skipf("mesh.trafficManagement is off")
 	}
-	codes := burst(30, func() Resp { return p.front(ctx, map[string]string{"x-probe-scenario": "outlier"}) })
+	// Each caller's sidecar counts errors and ejects on its own. Spread over catalog v1 and v2,
+	// v2's few requests rarely reach 3 errors, so its sidecar keeps the faulty pod and fails
+	// requests at the end of the burst. One subset means one sidecar sees every error.
+	hdr := map[string]string{"x-probe-scenario": "outlier", "x-version": "v2"}
+	codes := burst(30, func() Resp { return p.front(ctx, hdr) })
 	failed := 0
 	for _, c := range codes {
 		if c != http.StatusOK {
