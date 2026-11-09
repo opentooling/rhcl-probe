@@ -1,4 +1,5 @@
-.git
-.github
-charts
-*.md
+# The image needs requirements.txt and rhcl_probe/ only.
+*
+!requirements.txt
+!rhcl_probe/
+**/__pycache__
