@@ -148,3 +148,34 @@ or on an in-cluster Service is dropped the same way.
 Setting `mesh.egress.registryOnly: false` removes the egress restriction. If the OIDC checks
 then pass, the cause is on the sidecar side (case B). The egress check is skipped while it's
 off.
+
+## NetworkPolicy check: `outsider → frontend: 0 reset`
+
+**Symptom.** `mesh-network-policy` fails with `outsider → frontend: 0 reset`, or `0 refused`.
+
+**What the check does.** The `outsider` pod, which has no sidecar, calls the frontend directly.
+The chart's NetworkPolicies only let the gateway and the console reach the frontend, so the
+call should be dropped and time out.
+
+**Cause.** The call got through to the frontend pod, and its sidecar reset it because it only
+accepts mTLS. NetworkPolicies add up: if any policy in the namespace allows the connection, it
+is allowed, whatever the chart's policies deny. OpenShift project templates, and cluster
+policy tools such as ACM, often add policies like `allow-from-same-namespace`, which lets
+every pod in the namespace, the outsider included, reach every other.
+
+**What the check shows.** When it fails, it reads the namespace's NetworkPolicies and names the
+ones that admit the outsider on the frontend's port:
+
+```
+outsider → frontend: 0 reset, allowed by NetworkPolicy allow-from-same-namespace
+```
+
+If none does, the hint says the network plugin isn't enforcing NetworkPolicies. If it can't
+read them, the detail says why: it needs the Role and ClusterRole in `templates/rbac.yaml`.
+
+**Fix.** A NetworkPolicy can't take away what another allows, so the probe can't pass in that
+namespace. Either:
+
+- install the probe in a namespace without the policy, or
+- if the policy is enforced cluster-wide (ACM, for example) and can't be removed, accept the
+  result: pods in that namespace can bypass the gateway, which is what the check reports.

@@ -260,7 +260,18 @@ func checkNetworkPolicy(ctx context.Context, p *Probe) Outcome {
 		return failf("", "%v", err)
 	}
 	if fr.ErrorKind != "timeout" {
-		return failf("Only the gateway and the console may reach the frontend.", "outsider → frontend: %d %s", fr.Status, fr.ErrorKind)
+		got := fmt.Sprintf("outsider → frontend: %d %s", fr.Status, fr.ErrorKind)
+		names, err := p.policiesAllowingOutsider(ctx)
+		switch {
+		case err != nil:
+			return failf("Only the gateway and the console may reach the frontend.", "%s (couldn't read the NetworkPolicies: %v)", got, err)
+		case len(names) > 0:
+			return failf("NetworkPolicies add up: one that allows a connection lets it through whatever the others deny. "+
+				"Test in a namespace without it, or accept that pods in this namespace can bypass the gateway.",
+				"%s, allowed by NetworkPolicy %s", got, strings.Join(names, ", "))
+		default:
+			return failf("No NetworkPolicy here allows it, so the network plugin isn't enforcing them.", "%s", got)
+		}
 	}
 	return passf("outsider → frontend dropped (timed out after %dms)", fr.ElapsedMs)
 }
